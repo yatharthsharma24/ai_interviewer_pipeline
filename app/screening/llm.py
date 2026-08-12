@@ -26,8 +26,6 @@ from app.screening.rules import RuleOutcome
 
 Recommendation = Literal["strong_yes", "yes", "maybe", "no"]
 
-#: A candidate whose application is all keywords and no substance cannot be scored above
-#: this, no matter what number the model produced. See ``_apply_evidence_cap``.
 UNSUPPORTED_EVIDENCE_CAP = 49
 
 
@@ -70,9 +68,7 @@ class FitAssessment(BaseModel):
         description="Two to four sentences justifying the score, citing the application text."
     )
 
-    #: What the model originally said, before reconciliation. Not part of the JSON schema.
     _raw_recommendation: str | None = PrivateAttr(default=None)
-    #: Set only when the evidence cap lowered the score.
     _raw_fit_score: int | None = PrivateAttr(default=None)
 
 
@@ -111,7 +107,6 @@ Be calibrated: most real applicant pools are mediocre, and inflating scores make
 shortlist useless. Report what the evidence supports, including when that is unflattering."""
 
 
-# Re-exported so callers keep importing scoring errors from one place.
 class ScoringError(BackendError):
     pass
 
@@ -203,11 +198,9 @@ def score_candidate(job: JobOpening, candidate: Candidate, rules: RuleOutcome) -
             f"{backend.describe()} returned JSON that does not match the schema: {exc}"
         ) from exc
 
-    # Small local models occasionally emit an out-of-range score even under a grammar.
     assessment.fit_score = max(0, min(100, assessment.fit_score))
     _apply_evidence_cap(assessment)
 
-    # Keep the label consistent with the number that drives the shortlist decision.
     assessment._raw_recommendation = assessment.recommendation
     assessment.recommendation = recommendation_for_score(assessment.fit_score)
 

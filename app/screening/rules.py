@@ -20,7 +20,6 @@ from app.field_map import FIELDS_BY_KEY, LIST_FIELDS
 from app.models import Candidate, JobOpening
 from app.parsing import looks_like_email, looks_like_phone, looks_like_url
 
-#: canonical field -> column-level validator for syntactically broken answers
 _VALIDATORS = {
     "email": looks_like_email,
     "phone": looks_like_phone,
@@ -112,7 +111,6 @@ def apply_rules(candidate: Candidate, job: JobOpening) -> RuleOutcome:
 
     outcome.missing_fields = check_completeness(candidate, job)
 
-    # --- experience floor -------------------------------------------------------------
     floor = job.min_years_experience - slack
     if job.min_years_experience and candidate.years_experience is not None:
         if candidate.years_experience < floor:
@@ -122,7 +120,6 @@ def apply_rules(candidate: Candidate, job: JobOpening) -> RuleOutcome:
                 f"(tolerance {slack:g} years)."
             )
 
-    # --- experience ceiling (soft: only bites at the strict end) -----------------------
     if job.max_years_experience is not None and candidate.years_experience is not None:
         ceiling = job.max_years_experience + slack
         if candidate.years_experience > ceiling:
@@ -131,7 +128,6 @@ def apply_rules(candidate: Candidate, job: JobOpening) -> RuleOutcome:
                 f"{job.max_years_experience:g}-year ceiling for this role."
             )
 
-    # --- must-have skills -------------------------------------------------------------
     matched, missing_skills = match_required_skills(candidate, job)
     outcome.matched_required_skills = matched
     outcome.missing_required_skills = missing_skills
@@ -146,7 +142,6 @@ def apply_rules(candidate: Candidate, job: JobOpening) -> RuleOutcome:
                 f"Missing: {', '.join(missing_skills)}."
             )
 
-    # --- notice period ----------------------------------------------------------------
     if job.max_notice_period_days is not None and candidate.notice_period_days is not None:
         if candidate.notice_period_days > job.max_notice_period_days:
             outcome.rule_failures.append(
@@ -154,8 +149,6 @@ def apply_rules(candidate: Candidate, job: JobOpening) -> RuleOutcome:
                 f"{job.max_notice_period_days}-day maximum."
             )
 
-    # --- evidence links ---------------------------------------------------------------
-    # At the strict end we refuse to shortlist someone with nothing verifiable attached.
     if not thresholds["allow_missing_optional"]:
         evidence = [candidate.resume_url, candidate.linkedin, candidate.portfolio_url]
         if not any(evidence):
@@ -164,7 +157,6 @@ def apply_rules(candidate: Candidate, job: JobOpening) -> RuleOutcome:
                 f"against, which '{job.strictness}' screening requires."
             )
 
-    # --- compensation -----------------------------------------------------------------
     if job.max_expected_ctc is not None and candidate.expected_ctc is not None:
         if candidate.expected_ctc > job.max_expected_ctc:
             outcome.rule_failures.append(

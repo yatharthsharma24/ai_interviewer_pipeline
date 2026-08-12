@@ -55,10 +55,6 @@ class ScreenResult:
             self.errors = []
 
 
-# --------------------------------------------------------------------------------------
-# Response -> Candidate
-# --------------------------------------------------------------------------------------
-
 _COERCERS = {
     "years_experience": parse_years,
     "notice_period_days": parse_notice_period_days,
@@ -144,16 +140,10 @@ def sync_responses(session: Session, job: JobOpening) -> SyncResult:
         candidate.submitted_at = forms_api.parse_timestamp(
             response.get("lastSubmittedTime") or response.get("createTime")
         )
-        # A re-synced response is unscreened again; its answers may have changed.
         candidate.status = CandidateStatus.new.value
 
     session.commit()
     return result
-
-
-# --------------------------------------------------------------------------------------
-# Screening
-# --------------------------------------------------------------------------------------
 
 
 def screen_candidate(
@@ -185,7 +175,6 @@ def screen_candidate(
         return candidate
 
     if not use_llm:
-        # Rule-only mode: surviving the hard gates is the whole bar.
         candidate.status = CandidateStatus.shortlisted.value
         candidate.rationale = (
             "Passed all completeness and hard-requirement checks (AI scoring skipped)."
@@ -200,8 +189,6 @@ def screen_candidate(
     candidate.recommendation = assessment.recommendation
 
     dump = assessment.model_dump()
-    # Preserve what the model itself said before we reconciled the label to the score;
-    # a wide disagreement flags a low-confidence assessment worth a human look.
     dump["model_recommendation"] = assessment._raw_recommendation
     if assessment._raw_fit_score is not None:
         dump["model_fit_score"] = assessment._raw_fit_score
@@ -231,7 +218,6 @@ def screen_job(
         try:
             screen_candidate(session, job, candidate, use_llm=use_llm)
         except ScoringRefusal as exc:
-            # Leave the row unscreened rather than guessing; a human decides.
             session.rollback()
             result.errors.append(f"candidate {candidate.id}: {exc}")
             logger.warning("Scoring refused for candidate %s: %s", candidate.id, exc)

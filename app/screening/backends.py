@@ -21,7 +21,6 @@ import httpx
 
 from app.config import get_settings
 
-#: Model families that accept ``reasoning_effort``. Anything else gets it stripped.
 _REASONING_PREFIXES = ("gpt-5", "o1", "o3", "o4")
 
 _EFFORT_ALIASES = {
@@ -50,11 +49,6 @@ class ScoringBackend(Protocol):
     def describe(self) -> str: ...
 
     def complete_json(self, system: str, user: str, schema: dict) -> str: ...
-
-
-# --------------------------------------------------------------------------------------
-# Ollama
-# --------------------------------------------------------------------------------------
 
 
 class OllamaBackend:
@@ -89,8 +83,6 @@ class OllamaBackend:
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
-            # Ollama constrains generation to this schema with a grammar, so the reply
-            # is valid JSON by construction rather than by asking nicely.
             "format": schema,
             "options": {"temperature": 0, "num_ctx": self.num_ctx},
         }
@@ -135,18 +127,13 @@ class OllamaBackend:
         return content
 
 
-# --------------------------------------------------------------------------------------
-# OpenAI
-# --------------------------------------------------------------------------------------
-
-
 class OpenAIBackend:
     """Hosted OpenAI, Azure OpenAI, or any OpenAI-compatible gateway."""
 
     name = "openai"
 
     def __init__(self, model: str, api_key: str, base_url: str | None, effort: str, timeout: float):
-        import openai  # imported lazily so the Ollama path needs no OpenAI install
+        import openai
 
         self._openai = openai
         self.model = model
@@ -217,10 +204,6 @@ class OpenAIBackend:
             )
         return content
 
-
-# --------------------------------------------------------------------------------------
-# Factory
-# --------------------------------------------------------------------------------------
 
 _backend: ScoringBackend | None = None
 
