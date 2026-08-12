@@ -1,0 +1,531 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interview — __JOB_TITLE__</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36;
+    --text: #e7e9ee; --muted: #9aa3b2; --accent: #4f8cff;
+    --ok: #35c46b; --warn: #f0b429; --bad: #f2545b;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font: 15px/1.55 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 24px 20px 48px; }
+  header { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; flex-wrap: wrap; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { color: var(--muted); font-size: 14px; }
+  .grid { display: grid; grid-template-columns: 1.25fr 1fr; gap: 20px; margin-top: 22px; }
+  @media (max-width: 860px) { .grid { grid-template-columns: 1fr; } }
+  .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px; }
+  video { width: 100%; border-radius: 10px; background: #000; aspect-ratio: 4/3; object-fit: cover; transform: scaleX(-1); }
+  button {
+    font: inherit; font-weight: 600; border: 0; border-radius: 9px;
+    padding: 11px 18px; cursor: pointer; background: var(--accent); color: #fff;
+  }
+  button.secondary { background: #2a3040; color: var(--text); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .row { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 14px; }
+  .status { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--muted); }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.live { background: var(--ok); box-shadow: 0 0 0 4px rgba(53,196,107,.15); }
+  .dot.bad { background: var(--bad); }
+  .banner { display: none; border-radius: 9px; padding: 12px 14px; margin-top: 14px; font-weight: 600; }
+  .banner.warn { display: block; background: rgba(240,180,41,.14); color: var(--warn); border: 1px solid rgba(240,180,41,.35); }
+  .banner.bad  { display: block; background: rgba(242,84,91,.14); color: var(--bad); border: 1px solid rgba(242,84,91,.35); }
+  .banner.ok   { display: block; background: rgba(53,196,107,.12); color: var(--ok); border: 1px solid rgba(53,196,107,.3); }
+  ul.rules { margin: 10px 0 0; padding-left: 20px; color: var(--muted); font-size: 14px; }
+  ul.rules li { margin-bottom: 6px; }
+  #log { max-height: 340px; overflow-y: auto; margin-top: 12px; font-size: 14px; }
+  .turn { margin-bottom: 12px; }
+  .who { font-size: 11px; letter-spacing: .09em; text-transform: uppercase; color: var(--muted); }
+  .turn.interviewer .who { color: var(--accent); }
+  .metrics { display: flex; gap: 18px; margin-top: 12px; font-size: 13px; color: var(--muted); flex-wrap: wrap; }
+  .metrics b { color: var(--text); font-variant-numeric: tabular-nums; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Interview — __JOB_TITLE__</h1>
+      <div class="sub">Hello __CANDIDATE_NAME__. This is an AI-conducted voice interview.</div>
+    </div>
+    <div class="status"><span class="dot" id="dot"></span><span id="state">Not started</span></div>
+  </header>
+
+  <div id="banner" class="banner"></div>
+
+  <div class="grid">
+    <div class="panel">
+      <video id="cam" autoplay muted playsinline></video>
+      <div class="metrics">
+        <span>Elapsed <b id="elapsed">00:00</b></span>
+        <span>Warnings <b id="violations">0</b></span>
+        <span>Gaze <b id="gaze">—</b></span>
+      </div>
+      <div class="row">
+        <button id="start">Start interview</button>
+        <button id="end" class="secondary" disabled>End interview</button>
+      </div>
+      <ul class="rules">
+        <li>Stay on this tab — switching away is recorded.</li>
+        <li>Look at the camera. Sustained looking away is recorded.</li>
+        <li>Keep your face visible and be the only person on camera.</li>
+        <li>Speak naturally; the interviewer will wait for you to finish.</li>
+      </ul>
+    </div>
+
+    <div class="panel">
+      <strong>Transcript</strong>
+      <div id="log"><div class="sub">The conversation will appear here.</div></div>
+    </div>
+  </div>
+  <audio id="reply" autoplay></audio>
+</div>
+
+<script type="module">
+const TOKEN        = "__TOKEN__";
+const ALREADY_DONE = __ALREADY_DONE__;
+const END_REASON   = "__END_REASON__";
+
+const $ = (id) => document.getElementById(id);
+const els = {
+  start: $("start"), end: $("end"), cam: $("cam"), reply: $("reply"),
+  state: $("state"), dot: $("dot"), banner: $("banner"), log: $("log"),
+  elapsed: $("elapsed"), violations: $("violations"), gaze: $("gaze"),
+};
+
+let pc = null, stream = null, startedAt = null, finished = false;
+// Whichever transport is running the call. Both expose { close() }; see connectOpenAI /
+// connectGemini below. Only one is ever live.
+let transport = null;
+let proctorCfg = { look_away_seconds: 4, no_face_seconds: 8, tab_hidden_seconds: 3, max_violations: 4 };
+let timerId = null, gazeTimerId = null;
+
+function since() { return startedAt ? (Date.now() - startedAt) / 1000 : 0; }
+function setState(text, cls) { els.state.textContent = text; els.dot.className = "dot" + (cls ? " " + cls : ""); }
+function banner(text, kind) { els.banner.textContent = text; els.banner.className = "banner " + kind; }
+function clearBanner() { els.banner.className = "banner"; }
+
+function addTurn(speaker, text) {
+  if (!text || !text.trim()) return;
+  if (els.log.firstElementChild?.classList.contains("sub")) els.log.innerHTML = "";
+  const div = document.createElement("div");
+  div.className = "turn " + speaker;
+  div.innerHTML = `<div class="who">${speaker === "interviewer" ? "Interviewer" : "You"}</div><div></div>`;
+  div.lastElementChild.textContent = text;
+  els.log.appendChild(div);
+  els.log.scrollTop = els.log.scrollHeight;
+}
+
+async function post(path, body) {
+  try {
+    const res = await fetch(`/interview/${TOKEN}/${path}`, {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body || {}), keepalive: true,
+    });
+    if (!res.ok) return null;
+    return res.status === 204 ? {} : await res.json();
+  } catch { return null; }   // never let telemetry break the call
+}
+
+function sendTurn(speaker, text) { post("transcript", { speaker, text, at_seconds: since() }); }
+
+async function sendViolation(kind, duration, detail) {
+  const out = await post("event", { kind, at_seconds: since(), duration_seconds: duration, detail });
+  if (!out) return;
+  els.violations.textContent = out.violation_count;
+  if (out.should_end) {
+    banner("Interview ended: too many proctoring violations were recorded.", "bad");
+    await stop("proctor: too many violations", false);
+  } else if (out.warning) {
+    banner(out.warning, "warn");
+    setTimeout(() => { if (!finished) clearBanner(); }, 6000);
+  }
+}
+
+/* ---------------------------------------------------------------- proctoring: tab focus */
+let hiddenSince = null, blurSince = null;
+
+document.addEventListener("visibilitychange", () => {
+  if (!startedAt || finished) return;
+  if (document.hidden) { hiddenSince = Date.now(); }
+  else if (hiddenSince) {
+    const secs = (Date.now() - hiddenSince) / 1000; hiddenSince = null;
+    if (secs >= proctorCfg.tab_hidden_seconds) sendViolation("tab_hidden", secs, "Tab was hidden");
+  }
+});
+window.addEventListener("blur", () => { if (startedAt && !finished) blurSince = Date.now(); });
+window.addEventListener("focus", () => {
+  if (!startedAt || finished || !blurSince) return;
+  const secs = (Date.now() - blurSince) / 1000; blurSince = null;
+  // A tab switch fires blur too; visibilitychange already covered that case.
+  if (secs >= proctorCfg.tab_hidden_seconds && !document.hidden) {
+    sendViolation("window_blurred", secs, "Window lost focus");
+  }
+});
+
+/* ------------------------------------------------------------------ proctoring: gaze */
+let landmarker = null, awaySince = null, noFaceSince = null;
+
+async function loadLandmarker() {
+  // MediaPipe runs entirely in the browser — the video never leaves the machine.
+  try {
+    const vision = await import("https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14");
+    const files = await vision.FilesetResolver.forVisionTasks(
+      "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+    landmarker = await vision.FaceLandmarker.createFromOptions(files, {
+      baseOptions: {
+        modelAssetPath: "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
+        delegate: "GPU",
+      },
+      runningMode: "VIDEO", numFaces: 2, outputFacialTransformationMatrixes: true,
+    });
+    return true;
+  } catch (err) {
+    console.warn("Gaze detection unavailable:", err);
+    els.gaze.textContent = "unavailable";
+    // Degrade honestly rather than silently pretending the candidate is compliant.
+    post("event", { kind: "camera_off", at_seconds: since(), duration_seconds: 0,
+                    detail: "Gaze detection could not load; tab monitoring still active" });
+    return false;
+  }
+}
+
+/** Yaw/pitch from the facial transformation matrix, in degrees. */
+function headAngles(matrix) {
+  const m = matrix.data;               // column-major 4x4
+  const yaw = Math.atan2(-m[8], Math.hypot(m[9], m[10])) * 180 / Math.PI;
+  const pitch = Math.atan2(m[9], m[10]) * 180 / Math.PI;
+  return { yaw, pitch };
+}
+
+/** Iris offset within the eye, as a fraction of eye width. 0 = centred. */
+function irisOffset(pts) {
+  const eye = (outer, inner, iris) => {
+    const width = Math.hypot(pts[inner].x - pts[outer].x, pts[inner].y - pts[outer].y);
+    if (width < 1e-6) return 0;
+    const centreX = (pts[outer].x + pts[inner].x) / 2;
+    return (pts[iris].x - centreX) / width;
+  };
+  return (eye(33, 133, 468) + eye(362, 263, 473)) / 2;   // left + right, averaged
+}
+
+function watchGaze() {
+  const YAW_LIMIT = 22, PITCH_LIMIT = 20, IRIS_LIMIT = 0.28;
+
+  gazeTimerId = setInterval(() => {
+    if (!landmarker || !startedAt || finished || els.cam.readyState < 2) return;
+
+    let result;
+    try { result = landmarker.detectForVideo(els.cam, performance.now()); }
+    catch { return; }
+
+    const faces = result.faceLandmarks || [];
+    const now = Date.now();
+
+    if (faces.length === 0) {
+      awaySince = null;
+      if (!noFaceSince) noFaceSince = now;
+      const secs = (now - noFaceSince) / 1000;
+      els.gaze.textContent = "no face";
+      if (secs >= proctorCfg.no_face_seconds) {
+        sendViolation("no_face", secs, "No face visible"); noFaceSince = now;
+      }
+      return;
+    }
+    noFaceSince = null;
+
+    if (faces.length > 1) {
+      els.gaze.textContent = `${faces.length} faces`;
+      sendViolation("multiple_faces", 0, `${faces.length} faces visible`);
+      return;
+    }
+
+    const pts = faces[0];
+    const matrices = result.facialTransformationMatrixes || [];
+    const { yaw, pitch } = matrices.length ? headAngles(matrices[0]) : { yaw: 0, pitch: 0 };
+    const iris = pts.length > 473 ? irisOffset(pts) : 0;
+
+    const away = Math.abs(yaw) > YAW_LIMIT || Math.abs(pitch) > PITCH_LIMIT || Math.abs(iris) > IRIS_LIMIT;
+    els.gaze.textContent = away ? "away" : "on camera";
+
+    if (away) {
+      if (!awaySince) awaySince = now;
+      const secs = (now - awaySince) / 1000;
+      if (secs >= proctorCfg.look_away_seconds) {
+        sendViolation("looked_away", secs, `yaw ${yaw.toFixed(0)}° pitch ${pitch.toFixed(0)}°`);
+        awaySince = now;   // restart, so one long look-away is not many violations
+      }
+    } else {
+      awaySince = null;
+    }
+  }, 400);
+}
+
+/* --------------------------------------------------------------------- transports
+   Two providers, two completely different wire protocols, one interface: each connect
+   function returns { close() } and is responsible for playing the interviewer's audio and
+   calling addTurn/sendTurn as transcript arrives.
+
+   OpenAI: WebRTC straight to OpenAI, with a short-lived client secret.
+   Gemini: a WebSocket to *our own* server, which relays to Gemini Live. Audio is raw PCM
+           in both directions, so this path does its own capture, resampling and playback.
+*/
+
+async function connectOpenAI(session) {
+  pc = new RTCPeerConnection();
+  pc.ontrack = (e) => { els.reply.srcObject = e.streams[0]; };
+  for (const track of stream.getAudioTracks()) pc.addTrack(track, stream);
+
+  const channel = pc.createDataChannel("oai-events");
+  channel.addEventListener("message", (e) => {
+    let msg; try { msg = JSON.parse(e.data); } catch { return; }
+    // Event names have shifted across Realtime versions, so match on suffix.
+    const t = msg.type || "";
+    if (t.endsWith("input_audio_transcription.completed")) {
+      addTurn("candidate", msg.transcript); sendTurn("candidate", msg.transcript);
+    } else if (t.endsWith("output_audio_transcript.done") || t.endsWith("audio_transcript.done")) {
+      addTurn("interviewer", msg.transcript); sendTurn("interviewer", msg.transcript);
+    } else if (t === "error") {
+      console.warn("realtime error", msg);
+    }
+  });
+
+  const offer = await pc.createOffer();
+  await pc.setLocalDescription(offer);
+
+  const res = await fetch(`https://api.openai.com/v1/realtime/calls?model=${encodeURIComponent(session.model)}`, {
+    method: "POST", body: offer.sdp,
+    headers: { Authorization: `Bearer ${session.client_secret}`, "Content-Type": "application/sdp" },
+  });
+  if (!res.ok) throw new Error(await res.text());
+  await pc.setRemoteDescription({ type: "answer", sdp: await res.text() });
+
+  return {
+    close() {
+      try { pc?.getSenders().forEach((s) => s.track?.stop()); pc?.close(); } catch {}
+      pc = null;
+    },
+  };
+}
+
+function floatToPCM16(input) {
+  const out = new Int16Array(input.length);
+  for (let i = 0; i < input.length; i++) {
+    const s = Math.max(-1, Math.min(1, input[i]));
+    out[i] = s < 0 ? s * 0x8000 : s * 0x7fff;
+  }
+  return out;
+}
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunk = 0x8000;   // btoa on a huge spread argument blows the call stack
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+function base64ToBytes(b64) {
+  const binary = atob(b64);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return bytes;
+}
+
+async function connectGemini(session) {
+  const inRate = session.input_sample_rate || 16000;
+  const outRate = session.output_sample_rate || 24000;
+
+  const wsScheme = location.protocol === "https:" ? "wss" : "ws";
+  const ws = new WebSocket(`${wsScheme}://${location.host}${session.live_path}`);
+  ws.binaryType = "arraybuffer";
+
+  await new Promise((resolve, reject) => {
+    ws.addEventListener("open", resolve, { once: true });
+    ws.addEventListener("error", () => reject(new Error("live socket failed")), { once: true });
+  });
+
+  // --- playback: a queue of PCM buffers scheduled back to back, so consecutive chunks
+  // --- play as continuous speech instead of overlapping.
+  const playCtx = new AudioContext({ sampleRate: outRate });
+  let playHead = 0;
+  function playPCM(bytes) {
+    const pcm = new Int16Array(bytes.buffer, bytes.byteOffset, bytes.byteLength / 2);
+    const buf = playCtx.createBuffer(1, pcm.length, outRate);
+    const channelData = buf.getChannelData(0);
+    for (let i = 0; i < pcm.length; i++) channelData[i] = pcm[i] / 32768;
+    const src = playCtx.createBufferSource();
+    src.buffer = buf;
+    src.connect(playCtx.destination);
+    const now = playCtx.currentTime;
+    if (playHead < now) playHead = now;
+    src.start(playHead);
+    playHead += buf.duration;
+  }
+  function stopPlayback() {
+    // Gemini sends `interrupted` when the candidate talks over the interviewer. Dropping
+    // the schedule is what makes barge-in feel natural instead of the two overlapping.
+    playHead = 0;
+    try { playCtx.close(); } catch {}
+  }
+
+  // --- capture: the mic at the browser's own rate, downsampled to what Live expects.
+  const micCtx = new AudioContext({ sampleRate: inRate });
+  const source = micCtx.createMediaStreamSource(stream);
+  // ScriptProcessor is deprecated in favour of AudioWorklet, but an AudioWorklet needs a
+  // separate module file and this page is served as a single self-contained document.
+  const processor = micCtx.createScriptProcessor(4096, 1, 1);
+  processor.onaudioprocess = (e) => {
+    if (ws.readyState !== WebSocket.OPEN) return;
+    const pcm = floatToPCM16(e.inputBuffer.getChannelData(0));
+    ws.send(JSON.stringify({
+      realtimeInput: {
+        audio: {
+          mimeType: `audio/pcm;rate=${inRate}`,
+          data: bytesToBase64(new Uint8Array(pcm.buffer)),
+        },
+      },
+    }));
+  };
+  source.connect(processor);
+  // Routed to a muted gain node: ScriptProcessor only fires while it is connected to the
+  // destination, but sending the mic to the speakers would echo.
+  const mute = micCtx.createGain();
+  mute.gain.value = 0;
+  processor.connect(mute);
+  mute.connect(micCtx.destination);
+
+  ws.addEventListener("message", (e) => {
+    let frame;
+    try { frame = JSON.parse(typeof e.data === "string" ? e.data : new TextDecoder().decode(e.data)); }
+    catch { return; }
+
+    const content = frame.serverContent;
+    if (!content) return;
+
+    for (const part of content.modelTurn?.parts || []) {
+      const data = part.inlineData?.data;
+      if (data && (part.inlineData.mimeType || "").startsWith("audio/pcm")) playPCM(base64ToBytes(data));
+    }
+
+    // The server already stored these turns off the same frames; this only mirrors them
+    // into the on-screen log, so it does NOT call sendTurn and double-write.
+    if (content.inputTranscription?.text) addTurn("candidate", content.inputTranscription.text);
+    if (content.outputTranscription?.text) addTurn("interviewer", content.outputTranscription.text);
+  });
+
+  ws.addEventListener("close", (e) => {
+    if (finished) return;
+    console.warn("live socket closed", e.code, e.reason);
+    banner("The interview connection dropped. Please reload the page.", "bad");
+    stop("connection lost", true);
+  });
+
+  return {
+    close() {
+      try { processor.disconnect(); source.disconnect(); } catch {}
+      try { micCtx.close(); } catch {}
+      stopPlayback();
+      try { ws.close(); } catch {}
+    },
+  };
+}
+
+/* ------------------------------------------------------------------------- the call */
+async function start() {
+  els.start.disabled = true;
+  clearBanner();
+  setState("Requesting camera and microphone…");
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: true, noiseSuppression: true },
+      video: { width: 640, height: 480, facingMode: "user" },
+    });
+  } catch {
+    setState("Permission denied", "bad");
+    banner("Camera and microphone access are required for this interview.", "bad");
+    els.start.disabled = false;
+    return;
+  }
+  els.cam.srcObject = stream;
+
+  setState("Connecting…");
+  const session = await post("session", {});
+  if (!session || !session.provider) {
+    setState("Could not start", "bad");
+    banner("The interview could not be started. Please contact the hiring team.", "bad");
+    els.start.disabled = false;
+    return;
+  }
+  proctorCfg = session.proctor || proctorCfg;
+
+  try {
+    transport = session.provider === "gemini"
+      ? await connectGemini(session)
+      : await connectOpenAI(session);
+  } catch (err) {
+    console.error(err);
+    setState("Connection failed", "bad");
+    banner("Could not reach the interview service. Check your connection and reload.", "bad");
+    els.start.disabled = false;
+    return;
+  }
+
+  startedAt = Date.now();
+  finished = false;
+  setState("Interview in progress", "live");
+  els.end.disabled = false;
+  banner("The interviewer will speak first. Look at the camera and answer naturally.", "ok");
+  setTimeout(() => { if (!finished) clearBanner(); }, 8000);
+
+  timerId = setInterval(() => {
+    const s = Math.floor(since());
+    els.elapsed.textContent =
+      `${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}`;
+    if (session.max_minutes && s >= session.max_minutes * 60) stop("time limit reached", true);
+  }, 1000);
+
+  if (await loadLandmarker()) watchGaze();
+}
+
+async function stop(reason, notify) {
+  if (finished) return;
+  finished = true;
+  clearInterval(timerId); clearInterval(gazeTimerId);
+  try { transport?.close(); } catch {}
+  transport = null;
+  try { stream?.getTracks().forEach((t) => t.stop()); } catch {}
+  els.end.disabled = true; els.start.disabled = true;
+  setState("Interview ended");
+  if (notify) await post("end", { reason });
+  if (reason !== "proctor: too many violations") {
+    banner("Thank you — the interview is complete. You may close this tab.", "ok");
+  }
+}
+
+els.start.addEventListener("click", start);
+els.end.addEventListener("click", () => stop("ended by candidate", true));
+// A closed tab still ends the interview server-side; keepalive lets the POST survive unload.
+window.addEventListener("pagehide", () => {
+  if (startedAt && !finished) post("end", { reason: "candidate closed the page" });
+});
+
+if (ALREADY_DONE) {
+  els.start.disabled = true;
+  setState("Already completed");
+  banner(END_REASON
+    ? `This interview has already ended (${END_REASON}). You do not need to do anything else.`
+    : "This interview has already been completed.", "ok");
+}
+</script>
+</body>
+</html>
