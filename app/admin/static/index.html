@@ -1,0 +1,22 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Interview Pipeline — Admin</title>
+<!-- Absolute paths on purpose: the page is served at /admin with no trailing slash, so a
+     relative "./styles.css" resolves to /styles.css, which is not a route. -->
+<link rel="stylesheet" href="/admin/styles.css">
+</head>
+<body>
+<div class="shell">
+  <aside class="side">
+    <div class="brand">Interview Pipeline<small>Admin</small></div>
+    <nav class="nav" id="nav"></nav>
+  </aside>
+  <main class="main" id="view"><div class="empty">Loading…</div></main>
+</div>
+<div id="toast"></div>
+<script type="module" src="/admin/app.js"></script>
+</body>
+</html>
