@@ -1,0 +1,27 @@
+httpx>=0.27.0
+# Windows has no system timezone database; zoneinfo needs this to resolve IANA names.
+tzdata>=2024.1
+fastapi>=0.115.0
+uvicorn[standard]>=0.32.0
+sqlalchemy>=2.0.36
+pydantic>=2.9.0
+pydantic-settings>=2.6.0
+typer>=0.15.0
+rich>=13.9.0
+python-dotenv>=1.0.1
+google-api-python-client>=2.150.0
+google-auth>=2.35.0
+google-auth-oauthlib>=1.2.1
+google-auth-httplib2>=0.2.0
+
+# Required for Part 3 (the AI voice interview). Also used when SCREENING_PROVIDER=openai.
+openai>=1.99.0
+
+# Part 3 Gemini fallback: the live voice call is relayed over a WebSocket (see
+# app/interview/live_proxy.py). uvicorn[standard] already pulls this in, but the relay
+# imports it directly, so it is declared rather than assumed.
+websockets>=12.0
+
+# Part 3: extracting text from resume PDFs. Optional — without it the interviewer still
+# works from the candidate's structured application profile.
+pypdf>=5.1.0
